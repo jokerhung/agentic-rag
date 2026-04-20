@@ -76,15 +76,19 @@ class SupabaseRetriever(BaseRetriever):
         norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b))
         return dot / norm if norm else 0.0
 
-    def _search_via_rpc(self, vector_str: str) -> List[dict] | None:
-        """Dùng pgvector ANN index — hiệu quả cho dataset lớn."""
-        result = self.supabase.rpc("match_knowledge_chunks", {
-            "query_embedding": vector_str,
-            "match_threshold": self.match_threshold,
-            "match_count": self.match_count,
-        }).execute()
-        # RPC trả về [] có thể do schema cache cũ — fallback nếu rỗng
-        return result.data if result.data else None
+    def _search_via_rpc(self, query_embedding: List[float]) -> List[dict] | None:
+        """Dùng pgvector — hiệu quả cho dataset lớn. Trả về None nếu exception."""
+        try:
+            result = self.supabase.rpc("match_knowledge_chunks", {
+                "query_embedding": query_embedding,
+                "match_threshold": self.match_threshold,
+                "match_count": self.match_count,
+            }).execute()
+            return result.data  # [] hợp lệ = không có kết quả khớp
+        except Exception as e:
+            if self.debug:
+                print(f"\n[DEBUG] RPC lỗi: {e}, dùng fetch fallback")
+            return None
 
     def _search_via_fetch(self, query_embedding: List[float]) -> List[tuple]:
         """Fetch toàn bộ rồi tính cosine similarity trong Python — dùng khi dataset nhỏ hoặc RPC lỗi."""
@@ -106,10 +110,9 @@ class SupabaseRetriever(BaseRetriever):
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun
     ) -> List[Document]:
         query_embedding = self.embeddings.embed_query(query)
-        vector_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
 
         # Thử RPC trước (tận dụng pgvector index cho dataset lớn)
-        rpc_rows = self._search_via_rpc(vector_str)
+        rpc_rows = self._search_via_rpc(list(query_embedding))
         if rpc_rows is not None:
             if self.debug:
                 print(f"\n[DEBUG] RPC: {len(rpc_rows)} chunk(s)")

@@ -22,7 +22,7 @@ create index if not exists knowledge_chunks_embedding_idx
 
 -- Match function for RAG retrieval
 create or replace function match_knowledge_chunks(
-    query_embedding text,
+    query_embedding float8[],
     match_threshold float   default 0.0,
     match_count     int     default 5
 )
@@ -34,17 +34,16 @@ returns table (
     content     text,
     similarity  float
 )
-language sql stable
+language sql stable security definer
 as $$
-    select
-        id,
-        chunk_id,
-        title,
-        tags,
-        content,
-        1 - (embedding <=> query_embedding::vector) as similarity
-    from knowledge_chunks
-    where 1 - (embedding <=> query_embedding::vector) > match_threshold
-    order by embedding <=> query_embedding::vector
+    with ranked as (
+        select
+            id, chunk_id, title, tags, content,
+            (1 - (embedding <=> query_embedding::vector))::float as similarity
+        from knowledge_chunks
+    )
+    select * from ranked
+    where similarity > match_threshold
+    order by similarity desc
     limit match_count;
 $$;
